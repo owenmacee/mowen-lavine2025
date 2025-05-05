@@ -1,0 +1,219 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(sctransform)
+library(ggplot2)
+library(harmony)
+library(ggsci)
+library(ggpubr)
+library(pheatmap)
+library(Matrix)
+library(RColorBrewer)
+library(scales)
+library(SeuratDisk)
+library(Nebulosa)
+library(SeuratObject)
+library(tidyverse)
+```
+
+```{r}
+#Input data
+CSA_myeloid_data <- Read10X(data.dir = "CSA myeloid")
+CSA_myeloid <- CreateSeuratObject(counts = CSA_myeloid_data, min.cells = 3, min.features = 200)
+CSA_myeloid$immunosup <- "CSA"
+CSA_myeloid$GFP <- "neg"
+CSA_myeloid$sample <- "CSA myeloid"
+
+CSA_GFP_data <- Read10X(data.dir = "CSA GFP" )
+CSA_GFP<- CreateSeuratObject(counts= CSA_GFP_data, min.cells = 3, min.features = 200)
+CSA_GFP$immunosup <- "CSA"
+CSA_GFP$GFP <- "pos"
+CSA_GFP$sample <- "CSA GFP"
+
+Costim_Myeloid_data <- Read10X(data.dir = "Costim myeloid" )
+Costim_Myeloid <- CreateSeuratObject(counts= Costim_Myeloid_data, min.cells = 3, min.features = 200)
+Costim_Myeloid$immunosup <- "Costim"
+Costim_Myeloid$GFP <- "neg"
+Costim_Myeloid$sample <- "Costim Myeloid"
+
+Costim_GFP_data <- Read10X(data.dir = "Costim GFP" )
+Costim_GFP <- CreateSeuratObject(counts= Costim_GFP_data, min.cells = 3, min.features = 200)
+Costim_GFP$immunosup <- "Costim"
+Costim_GFP$GFP <- "pos"
+Costim_GFP$sample <- "Costim GFP"
+```
+
+```{r}
+#Merge objects
+MO1 <- merge(x=Costim_GFP, y = c(Costim_Myeloid, CSA_GFP, CSA_myeloid))
+```
+
+```{r}
+#QC
+preQC[["percent.mt"]] <- PercentageFeatureSet(preQC, pattern = "^mt-")
+VlnPlot(preQC, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0, group.by = "immunosup")
+ncol(preQC)
+MO1_postQC <- subset(preQC, subset = nFeature_RNA > 500 & nFeature_RNA < 7000 & percent.mt < 10 & nCount_RNA < 30000)
+ncol(MO1_postQC)
+VlnPlot(MO1_postQC, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0, group.by = "immunosup")
+```
+
+```{r}
+#normalization and clustering
+DefaultAssay(MO1_postQC) <- 'RNA'
+MO1_postQC <- SCTransform(MO1_postQC, vars.to.regress = c("percent.mt", "nCount_RNA"), verbose = TRUE)
+MO1_postQC <- RunPCA(MO1_postQC, features = VariableFeatures(object = MO1_postQC), npcs=100, verbose=TRUE)
+DefaultAssay(MO1_postQC) <- "SCT"
+MO1_postQC <- FindNeighbors(MO1_postQC, dims = 1:40, verbose = FALSE, 
+                            reduction = "pca")
+MO1_postQC <- FindClusters(MO1_postQC, resolution = 
+                             c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8), 
+                           verbose = FALSE)
+MO1_postQC <- RunUMAP(MO1_postQC, dims = 1:40, verbose = FALSE, reduction = "pca")
+```
+
+```{r}
+#visualize UMAP
+DimPlot(MO1_postQC, group.by="SCT_snn_res.0.8")
+```
+
+```{r}
+#Find markers for cell type annotation
+Idents(MO1_postQC) <- "SCT_snn_res.0.8"
+MO1_postQC.rnamarkers <- FindAllMarkers(MO1_postQC, 
+                                        only.pos = TRUE, 
+                                        min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(MO1_postQC.rnamarkers, file ="MO1_res0.8.csv", quote = FALSE)
+```
+
+```{r}
+#Annotations
+fun <- function(x) {
+        if (x =="0") {"cDC2"}
+        else if (x == "1") {"Classicalmonocyte"}
+        else if (x == "2") {"Mac1(Thbs1,Cxcl2)"}
+        else if (x == "3") {"Mac2(C1qa,Apoe)"}
+        else if (x == "4") {"non-classical monocyte"}
+        else if (x == "5") {"cDC1"}
+        else if (x == "6") {"cDC2"}
+        else if (x == "7") {"Mac3(Ccl8,Cxcl13)"}
+        else if (x == "8") {"Mac4(Saa3,Lcn2)"}
+        else if (x == "9") {"Mac5(Spp1,Arg1)"}
+        else if (x == "10"){"DC3"}
+        else if (x == "11"){"pDC"}
+        else if (x == "12") {"Mac5(Spp1,Arg1)"}   
+        else if (x == "13") {"Classicalmonocyte"}
+}
+
+MO1_postQC$annotations <- mapply(fun, MO1_postQC$SCT_snn_res.0.8)
+```
+
+```{r}
+#Visualize UMAP with annotated cell type
+DimPlot(MO1_postQC,group.by = "annotations", label=TRUE, cols=c('DC3'='#A6CEE3', 'cDC1'='#1F78B4','cDC2'='#B2DF8A','Classicalmonocyte'='#33A02C','Mac1(Thbs1,Cxcl2)'='#FB9A99','Mac2(C1qa,Apoe)'='#E31A1C','Mac3(Ccl8,Cxcl13)'='#FDBF6F','Mac4(Saa3,Lcn2)'='#FF7F00','Mac5(Spp1,Arg1)'='#CAB2D6','non-classical monocyte'='#6A3D9a','pDC'='#FFFF99'))
+```
+
+```{r}
+#Composition plot
+ggplot(MO1_postQC@meta.data, aes(x=immunosup, fill=annotations)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) + scale_fill_manual(values = c('DC3'='#A6CEE3', 'cDC1'='#1F78B4','cDC2'='#B2DF8A','Classicalmonocyte'='#33A02C','Mac1(Thbs1,Cxcl2)'='#FB9A99','Mac2(C1qa,Apoe)'='#E31A1C','Mac3(Ccl8,Cxcl13)'='#FDBF6F','Mac4(Saa3,Lcn2)'='#FF7F00','Mac5(Spp1,Arg1)'='#CAB2D6','non-classical monocyte'='#6A3D9a','pDC'='#FFFF99')) + theme(axis.line = element_line(colour = "black"),    panel.grid.major = element_blank(),    panel.grid.minor = element_blank(),    panel.background = element_blank())
+```
+
+```{r}
+#Z-scores plotted into UMAP- repeated for all annotated cell types
+Idents(MO1_postQC) <- "annotations"
+DefaultAssay(MO1_postQC) <- "SCT"
+expdata <- GetAssayData(MO1_postQC)
+zcDC1 <- c('Wdfy4','Ccser1','Cst3','Gm36723','Xcr1')
+pops<-list(zcDC1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+  genes <- pops[[i]]
+  zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+  av <- numeric(ncol(expdata))
+  
+  geneExp <- as.matrix(expdata[zz, ])
+  geneExp <- t(scale(t(geneExp)))
+  geneExp[is.nan(geneExp)] <- 0
+  z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+MO1_postQC@meta.data$zcDC1<-z_scores[1,]
+
+FeaturePlot(MO1_postQC, features = c('zcDC1'), pt.size = 2)  + coord_fixed() + scale_color_gradientn(colors=c("#0D0887FF", "#7E03A8FF", "#CC4678FF", "#F89441FF", "#F0F921FF"))
+```
+
+```{r}
+#Dot plot of cell type gene expression
+MO1genes <- c('Wdfy4','Xcr1','Ifitm1','Il1r2','Ly6i','Cxcl9','Thbs1','Cxcl2','C1qa','Apoe','Ccl8','Cxcl13','Saa3','Lcn2','Spp1','Arg1','Chil3','S100a8','Siglech','Cyp7b1','Top2a','Stmn1')
+
+DotPlot(MO1_postQC, features=MO1genes, group.by="annotations", col.min=0, col.max=1, cols = c("lightgrey", "red")) + theme(axis.text=element_text(size=3)) + theme(axis.text.y = element_text(size=13)) + theme(axis.text.x = element_text(angle = 90, size=13))
+```
+
+```{r}
+#Reference mapping of controls
+#Load query objects into seurat
+#Predict cell type based on reference
+Idents(MO1_postQC) <- "annotations"
+anchorsall <- FindTransferAnchors(
+  reference = MO1_postQC,
+  query = controls,
+  reference.reduction = "pca",
+  dims = 1:30
+)
+
+predictionsall <- TransferData(anchorset = anchorsall, refdata = MO1_postQC$annotations, dims = 1:30)
+controls <- AddMetaData(controls, metadata = predictionsall)
+
+controls <- MapQuery(
+  anchorset = anchorsall,
+  reference = MO1_postQC,
+  query = controls,
+  refdata = list(celltype = "annotations"),
+  reference.reduction = "pca",
+  reduction.model = "umap"
+)
+
+DimPlot(query, reduction = "ref.umap", group.by = "predicted.celltype", split.by="condition", pt.size=1, cols=c('DC3'='#A6CEE3', 'cDC1'='#1F78B4','cDC2'='#B2DF8A','Classicalmonocyte'='#33A02C','Mac1(Thbs1,Cxcl2)'='#FB9A99','Mac2(C1qa,Apoe)'='#E31A1C','Mac3(Ccl8,Cxcl13)'='#FDBF6F','Mac4(Saa3,Lcn2)'='#FF7F00','Mac5(Spp1,Arg1)'='#CAB2D6','non-classical monocyte'='#6A3D9a','pDC'='#FFFF99'))
+
+
+ggplot(query@meta.data, aes(x=condition, fill=predicted.celltype)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90))  + scale_fill_manual(values = c('cDC'='#A6CEE3', 'cDC1'='#1F78B4','cDC2'='#B2DF8A','Classicalmonocyte'='#33A02C','Mac1(Thbs1,Cxcl2)'='#FB9A99','Mac2(C1qa,Apoe)'='#E31A1C','Mac3(Ccl8,Cxcl13)'='#FDBF6F','Mac4(Saa3,Lcn2)'='#FF7F00','Mac5(Spp1,Arg1)'='#CAB2D6','Monocyte'='#6A3D9a','pDC'='#FFFF99')) + theme(axis.line = element_line(colour = "black"),
+                                                                                                                                                                                panel.grid.major = element_blank(),
+                                                                                                                                                                                panel.grid.minor = element_blank(),
+                                                                                                                                                                                panel.background = element_blank()) 
+```
+
+```{r}
+#Differential gene expression analysis
+MO1_postQC$immunosup.annotations <- paste(MO1_postQC$annotations, MO1_postQC$immunosup, sep = "_")
+
+Idents(MO1_postQC) <- "immunosup"
+DE_CSB <- FindMarkers(MO1_postQC, ident.1 = 'Costim', ident.2 = 'CSA', verbose = FALSE)
+write.csv(DE_CSB, file = "./DE_CSB_MO1.csv", row.names = TRUE)
+
+DE_CSA <- FindMarkers(MO1_postQC, ident.1 = "CSA", ident.2 = "Costim", verbose = FALSE)
+write.csv(DE_CSA, file = "./DE_CSA_MO1.csv", row.names = TRUE)
+```
+
+
+```{r}
+#Heat map of DE genes
+combinedgenes <- c('Wdfy4','Flt3','Zbtb46','Xcr1','Clec9a','Tbc1d4','Hdac9','Tmcc3','Trerf1','Cst3','Tmem176b','Ust','Nav1','Klrd1','Spp1','Ccr7','Chil3','Ly6c2','S100a8','Hmox1','Acod1','Tgfbi','Upp1','Prdx5','Tgm2','Thbs1','Nrg1','Cxcl10','Plac8','Cebpb','Pla2g7','Fcgr4','Arg1','Cxcl2','Il1b')
+
+DoHeatmap(MO1_postQC, features=combinedgenes, group.by="immunosup", limits=c(0,1)) + scale_fill_viridis()
+```
+
+```{r}
+#Violin plot of immunoregulatory genes in CSB hearts
+Idents(MO1_postQC) <- "annotations"
+MO1_DC <- subset(MO1_postQC, idents=c("cDC1","cDC2"))
+
+Idents(MO1_DC) <- "immunosup"
+MO1_DCCSB <- subset(MO1_DC, idents=c('Costim'))
+
+VlnPlot(MO1_DCCSB, features="Cd274", group.by="annotations")
+VlnPlot(MO1_DCCSB, features="Tgfb1", group.by="annotations")
+VlnPlot(MO1_DCCSB, features="Ahr", group.by="annotations")
+VlnPlot(MO1_DCCSB, features="Pdcd1lg2", group.by="annotations")
+```
