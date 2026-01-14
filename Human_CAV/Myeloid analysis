@@ -1,0 +1,133 @@
+---
+title: "CAV single cell RNA sequencing analysis - Myeloid"
+author: "Macee Owen"
+output: html_document
+---
+
+# Load relevant libraries
+```{r}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(hdf5r)
+library(harmony)
+library(SPOTlight)
+library(SeuratData)
+library(SeuratDisk)
+library(enrichplot)
+library(enrichR)
+library(Matrix)
+library(data.table)
+library(gt)
+library(igraph)
+library(RColorBrewer)
+library(VennDiagram)
+library(viridis)
+library(spacexr)
+```
+
+```{r}
+sc0.1myeloid <- readRDS("./sc0.1myeloid.rds")
+scobject <- readRDS("./scobject with annotations.rds")
+```
+
+# Recluster
+```{r}
+sc0.1myeloid <- FindNeighbors(sc0.1myeloid, dims = 1:40, verbose = FALSE, reduction = "pca")
+sc0.1myeloid <- FindClusters(sc0.1myeloid, resolution =  c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8), verbose = FALSE)
+sc0.1myeloid <- RunUMAP(sc0.1myeloid, dims = 1:40, verbose = FALSE, reduction = "pca", return.model = TRUE)
+```
+
+# Marker genes
+```{r}
+Idents(sc0.1myeloid) <- "SCT_snn_res.0.2"
+sc0.1myeloid.rnamarkers <- FindAllMarkers(sc0.1myeloid, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(sc0.1myeloid.rnamarkers, file ="./sc0.1myeloid0.2.csv", quote = FALSE)
+```
+
+# Annotate
+```{r}
+fun <- function(x) {
+        if (x == "0") {"Mac1"}
+        else if (x == "1") {"Mac2"}
+        else if (x == "2") {"Mac3"}
+        else if (x == "3") {"Mac4"}
+        else if (x == "4") {"Monocyte"}
+        else if (x == "5") {"cDC"}
+        else if (x == "6") {"Proliferating cell"}
+}
+
+sc0.1myeloid$annotations <- mapply(fun, sc0.1myeloid$SCT_snn_res.0.2)
+```
+# Plot annotated UMAP
+```{r}
+Idents(sc0.1myeloid) <- "SCT_snn_res.0.2"
+DimPlot(sc0.1myeloid, group.by="SCT_snn_res.0.2")
+png(filename="./sc0.1myeloidumap2.png", width=15, height=10, units="cm", res=300)
+DimPlot(sc0.1myeloid, group.by = "annotations")
+dev.off()
+```
+
+# Heatmap of gene signatures
+```{r}
+genes.myeloid <- c('HLA-DQA2','CXCL10','ANK3','IFIT3','CXCL9','SPP1','APOE','APOC1','FABP4','GPNMB','PDE4D','LYVE1','RNASE1','TTN','MAMDC2','RPS26','HLA-DQA1','RPS4Y1','PLTP','HLA-DRB1','EREG','S100A8','VCAN','AQP9','AREG','LGALS2','CCSER1','IDO1','S100B','FCER1A','CENPF','MKI67','HIST1H4C','TOP2A','STMN1')
+
+png(filename="./sc0.1myeloidheatmap.png", width=40, height=40, units="cm", res=300)
+p <- DoHeatmap(sc0.1myeloid, features = genes.myeloid, angle = 90, group.colors=c('cDC'= '#01665E', 'Mac1'='#DEEBF7', 'Mac2'='#7FCDBB', 'Monocyte'="blue", 'Proliferating'='#82EEFD', 'Mac3'='skyblue2', 'Mac4'='#084594')) + scale_fill_viridis() +
+  theme(axis.text=element_text(size=1)) + 
+  theme(axis.text.x.top = element_text(size = 0.5)) +
+  theme(panel.spacing.x = unit(0.1, "cm")) 
+dev.off()
+```
+
+# Cell composition stacked bar plot
+```{r}
+png(filename="./sc0.1myeloidstack.png", width=40, height=40, units="cm", res=300)
+ggplot(sc0.1myeloid@meta.data, aes(x=Condition, fill=annotations)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) + scale_fill_manual(values = c('cDC'= '#01665E', 'Mac1'='#DEEBF7', 'Mac2'='#7FCDBB', 'Monocyte'="blue", 'Proliferating'='#82EEFD', 'Mac3'='skyblue2', 'Mac4'='#084594'))  + theme(axis.line = element_line(colour = "black"),    panel.grid.major = element_blank(),    panel.grid.minor = element_blank(),    panel.background = element_blank())
+dev.off()
+```
+
+# Dot plot
+```{r}
+genes.myeloid.dot <- c('SPP1','APOE','APOC1','GPNMB','PDE4D','LYVE1','HIST1H4C','TOP2A','MK167','EREG','S100A8','VCAN','RPS26','HLA-DQA1','RPS4Y1','HLA-DQA2','ANK3','IFIT3','AREG','LGALS2','CCSER1')
+
+png(filename="./myeloiddotplot.png", width=20, height=15, units="cm", res=300)
+DotPlot(sc0.1myeloid, features=genes.myeloid.dot, group.by="annotations", cols = c("lightgrey", "red")) + theme(axis.text=element_text(size=3)) + theme(axis.text.y = element_text(size=5)) + theme(axis.text.x = element_text(angle = 90))
+dev.off()
+```
+
+# Plot gene signatures/z scores onto UMAP
+```{r}
+if (TRUE) {
+data("sc0.1myeloid")
+CTLmyeloid_features <- list(c(
+'FABP4',
+'CD163',
+'FKBP5',
+'CCL20',
+'RNASE1'
+))
+sc0.1myeloid <- AddModuleScore(
+  object = sc0.1myeloid,
+  features = CTLmyeloid_features,
+  ctrl = 5,
+  name = 'CTLmyeloid_Features'
+)
+head(x = sc0.1myeloid[])
+}
+
+png(filename="./scmyeloidCTLsig2.png", width=20, height=20, units="cm", res=50)
+FeaturePlot(sc0.1myeloid, features="CTLmyeloid_Features1") + 
+  scale_color_gradientn(colors=c("#0D0887FF", "#7E03A8FF", "#CC4678FF", "#F89441FF", "#F0F921FF")) + 
+  theme(legend.text = element_text(size = 0),
+        legend.title = element_text(size = 20), 
+        legend.key.size = unit(1, "cm"))
+dev.off()
+```
+
+# Save annotated myeloid object
+```{r}
+saveRDS(sc0.1myeloid, "./sc0.1myeloid.rds")
+```
+
