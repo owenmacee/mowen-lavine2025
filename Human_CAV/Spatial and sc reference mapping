@@ -1,0 +1,74 @@
+---
+title: "CAV spatial and single cell reference mapping"
+author: "Macee Owen"
+output: html_document
+---
+
+# Load relevant libraries
+```{r}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(hdf5r)
+library(harmony)
+library(SPOTlight)
+library(SeuratData)
+library(SeuratDisk)
+library(enrichplot)
+library(enrichR)
+library(Matrix)
+library(data.table)
+library(gt)
+library(igraph)
+library(RColorBrewer)
+library(VennDiagram)
+library(viridis)
+library(spacexr)
+```
+
+# Reference map ICAV spatial onto scobject single cell
+```{r}
+#Predict cell type based on reference
+Idents(scobjectpostQC) <- "annotations"
+anchorsall <- FindTransferAnchors(
+  reference = scobjectpostQC,
+  query = ICAV.merge,
+  reference.reduction = "pca",
+  dims = 1:40
+)
+
+saveRDS(anchorsall, "anchorsall.rds")
+
+predictionsall <- TransferData(anchorset = anchorsall, refdata = scobjectpostQC$annotations, dims = 1:40)
+ICAV.merge <- AddMetaData(ICAV.merge, metadata = predictionsall)
+
+ICAV.merge <- MapQuery(
+  anchorset = anchorsall,
+  reference = scobjectpostQC,
+  query = ICAV.merge,
+  refdata = list(celltype = "annotations"),
+  reference.reduction = "harmony",
+  reduction.model = "umap"
+)
+
+saveRDS(ICAV.merge, "ICAV.merge.mapped.rds")
+```
+
+# Visualise mapping
+```{r}
+# Global
+DimPlot(object = ICAV.merge, reduction = "ref.umap", pt.size = 0.1, group.by = "predicted.celltype", label = TRUE, label.size = 2)
+# ModSMC and glia
+DimPlot(ICAV.merge, label=T,reduction = "ref.umap", group.by = "predicted.celltype", cells.highlight= list("Modulated_SMC", "Glia1"), cols.highlight = c("darkblue","red"), cols= "grey")
+```
+
+#Cell type prediction score
+```{r}
+Idents(ICAV.merge) <- "predicted.id"
+
+png(filename="./predictionscoreResMac.png", width=40, height=40, units="cm", res=50)
+FeaturePlot(ICAV.merge, "prediction.score.Resident.mac")
+dev.off()
+```
+
