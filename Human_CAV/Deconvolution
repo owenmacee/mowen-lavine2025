@@ -1,0 +1,42 @@
+# Seurat Deconvolution
+
+```{r}
+palette = c('#33A02C','#01665E','#B2DF8A','#D4B9DA','#CE1256','#FFF7F3','#FDBF6F','#FFFF99','#BE6400','#DEEBF7','#7FCDBB','#FF7F00','#DD3497','#35978F','#AE017E','#4292C6','#2171B5','#7A0177','#FA9FB5','#084594','#E31A1C')
+```
+
+```{r}
+# set up reference
+Idents(scobjectpostQC) <- "annotations"
+
+# extract information to pass to the RCTD Reference function
+counts <- scobjectpostQC[["RNA"]]$counts
+cluster <- as.factor(scobjectpostQC$annotations)
+names(cluster) <- colnames(scobjectpostQC)
+nUMI <- scobjectpostQC$nCount_RNA
+names(nUMI) <- colnames(scobjectpostQC)
+reference <- Reference(counts, cluster, nUMI)
+```
+
+# T1176
+```{r}
+# set up query with the RCTD function SpatialRNA
+counts <- CAV1[["Spatial"]]$counts
+coords <- GetTissueCoordinates(CAV1)
+colnames(coords) <- c("x", "y")
+coords[is.na(colnames(coords))] <- NULL
+query <- SpatialRNA(coords, counts, colSums(counts))
+
+#Using the reference and query object, we annotate the dataset and add the cell type labels to the query Seurat object. RCTD parallelizes well, so multiple cores can be specified for faster performance.
+
+RCTD <- create.RCTD(query, reference, max_cores = 8)
+RCTD <- run.RCTD(RCTD, doublet_mode = "doublet")
+CAV1 <- AddMetaData(CAV1, metadata = RCTD@results$results_df)
+
+#Next, plot the RCTD annotations. Because we ran RCTD in doublet mode, the algorithm assigns a first_type and second_type for each barcode or spot.
+
+png(filename="./CAV1deconvoluted.png", width=40, height=40, units="cm", res=300)
+p1 <- SpatialDimPlot(CAV1, group.by = "first_type", cols=c('cDC'= '#01665E', 'Mac1'='#DEEBF7', 'Mac2'='#7FCDBB', 'Monocyte'="blue", 'Proliferating'='#4292C6', 'Mac3'='skyblue2', 'Mac4'='#084594','EC_like'='#D4B9DA', 'Fibroblast'='darkred', 'Pericyte2'='#BE6400', 'ModSMC'='#DD3497', 'Pericyte'='orchid1', 'SMC'='#7A0177','Endothelial'='#B2DF8A', 'T cells'='#E31A1C', 'Glia'='#FDBF6F', 'Mast cells'='#FF7F00', 'B cells'='#6A3D9A'))
+p2 <- SpatialDimPlot(CAV1, group.by = "second_type", cols = c('cDC'= '#01665E', 'Mac1'='#DEEBF7', 'Mac2'='#7FCDBB', 'Monocyte'="blue", 'Proliferating'='#4292C6', 'Mac3'='skyblue2', 'Mac4'='#084594','EC_like'='#D4B9DA', 'Fibroblast'='darkred', 'Pericyte2'='#BE6400', 'ModSMC'='#DD3497', 'Pericyte'='orchid1', 'SMC'='#7A0177','Endothelial'='#B2DF8A', 'T cells'='#E31A1C', 'Glia'='#FDBF6F', 'Mast cells'='#FF7F00', 'B cells'='#6A3D9A'))
+p1 + p2
+dev.off()
+```
